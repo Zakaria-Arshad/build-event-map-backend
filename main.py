@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 import httpx
 from dotenv import load_dotenv
 import os
@@ -65,6 +65,34 @@ async def createMap(map: Map):
     db = app.state.db
     insert_result = await db["maps"].insert_one(map)
     return insert_result.inserted_id
+
+@app.post("/generate-schedule")
+async def generateSchedule(events_list: Map):
+    prompt = "Create a schedule based on these events:\n"
+    for event in events_list.events:
+        prompt += f"- {event.title} at {event.venue_name} on {event.datetime_utc}\n"
+    
+    # Send the prompt to OpenAI's API
+    return await call_openai_api(prompt)
+
+async def call_openai_api(prompt):
+    api_key = os.getenv("OPENAI_KEY")
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.openai.com/v1/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": "gpt-3.5-turbo",
+                    "prompt": prompt,
+                    "max_tokens": 150
+                },
+            )
+            response.raise_for_status()  # This will raise an exception for 4XX or 5XX responses
+            return response.json()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    
 
 
 
