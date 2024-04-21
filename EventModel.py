@@ -26,6 +26,6 @@ class Event(BaseModel):
         
         stat_data = values.get("stats", {})
         if "lowest_price" in stat_data:
-            values["stats.lowest_price"] = stat_data["lowest_price"]
+            values["stats.lowest_price"] = stat_data["lowest_price"] if isinstance(stat_data["lowest_price"], float) else 0
         return values
 

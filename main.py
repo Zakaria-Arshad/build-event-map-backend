@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from dotenv import load_dotenv
 import os
@@ -8,7 +9,6 @@ from contextlib import asynccontextmanager
 from bson import ObjectId
 from EventModel import Event
 from MapModel import Map
-
 
 load_dotenv() # loads environment variables
 
@@ -21,7 +21,7 @@ client_id = os.getenv("SEATGEEK_CLIENT_ID")
 async def lifespan(app: FastAPI):
     uri = os.getenv("MONGODB_URI")
     client = AsyncIOMotorClient(uri, server_api=ServerApi("1"))
-    app.state.db = client # attach the client to the app state
+    app.state.db = client.Maps # attach the client to the app state
     try:
         await client.admin.command('ping')
         print("Pinged your deployment. You successfully connected to MongoDB!")
@@ -32,6 +32,28 @@ async def lifespan(app: FastAPI):
     print("Ending")
 
 app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
+@app.get("/fetch-map/{route}")
+async def fetchMap(route):
+    map_id = route
+    db = app.state.db
+    try:
+        map = await db.MapInfo.find_one({"_id": ObjectId((map_id))})
+        if map:
+            map["_id"] = str(map["_id"])
+            return map # returns json representation of map
+        else:
+            return {"error": "Map not found"}
+    except:
+        return {"error": "Unexpected Result"}
 
 @app.get("/")
 async def root():
@@ -46,34 +68,24 @@ async def fetchEvents(route):
         events = [Event(**event) for event in data["events"]]
         return events
 
-@app.get("/fetch-map/{route}")
-async def fetchMap(route):
-    map_id = route
-    db = app.state.db
-    try:
-        map = await db["maps"].find_one({"id": ObjectId(map_id)})
-        if map:
-            map["_id"] = str(map["_id"])
-            return map # returns json representation of map
-        else:
-            return {"error": "Map not found"}
-    except:
-        return {"error": "Unexpected Result"}
-    
 @app.post("/create-map")
 async def createMap(map: Map):
     db = app.state.db
-    insert_result = await db["maps"].insert_one(map)
+    insert_result = await db["Maps"]["MapsInfo"].insert_one(map)
     return insert_result.inserted_id
 
 @app.post("/generate-schedule")
 async def generateSchedule(events_list: Map):
-    prompt = "Create a schedule based on these events:\n"
+    prompt = "Based on this list of events, create a travel itinerary to all of them.:\n"
     for event in events_list.events:
         prompt += f"- {event.title} at {event.venue_name} on {event.datetime_utc}\n"
     
     # Send the prompt to OpenAI's API
-    return await call_openai_api(prompt)
+    try:
+        call = await call_openai_api(prompt)
+        return call
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def call_openai_api(prompt):
     api_key = os.getenv("OPENAI_KEY")
@@ -83,13 +95,15 @@ async def call_openai_api(prompt):
                 "https://api.openai.com/v1/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={
-                    "model": "gpt-3.5-turbo",
-                    "prompt": prompt,
-                    "max_tokens": 150
+                    "model": "gpt-3.5-turbo-instruct",
+                    "prompt": prompt, 
+                    "max_tokens": 1000
                 },
             )
             response.raise_for_status()  # This will raise an exception for 4XX or 5XX responses
-            return response.json()
+            json_response = response.json()
+            generated_text = json_response['choices'][0]['text']
+            return generated_text
     except httpx.HTTPError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
     
