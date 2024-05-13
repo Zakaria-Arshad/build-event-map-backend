@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from dotenv import load_dotenv
 import os
+import json
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.server_api import ServerApi
 from contextlib import asynccontextmanager
@@ -46,7 +47,7 @@ async def fetchMap(route):
     map_id = route
     db = app.state.db
     try:
-        map = await db.MapInfo.find_one({"_id": ObjectId((map_id))})
+        map = await db.MapsInfo.find_one({"_id": ObjectId((map_id))})
         if map:
             map["_id"] = str(map["_id"])
             return map # returns json representation of map
@@ -69,10 +70,13 @@ async def fetchEvents(route):
         return events
 
 @app.post("/create-map")
-async def createMap(map: Map):
+async def create_map(map: Map):
     db = app.state.db
-    insert_result = await db["Maps"]["MapsInfo"].insert_one(map)
-    return insert_result.inserted_id
+    # convert Pydantic model to dict, then to JSON to handle deep objects (list of Events) correctly
+    map_dict = json.loads(map.json())
+    insert_result = await db["MapsInfo"].insert_one(map_dict)
+    return {"inserted_id": str(insert_result.inserted_id)}
+
 
 @app.post("/generate-schedule")
 async def generateSchedule(events_list: Map):
